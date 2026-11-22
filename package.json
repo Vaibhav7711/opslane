@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "server": "node server/start.mjs",
+    "server:postgres": "node server/pg-start.mjs",
     "lint": "eslint src",
     "build": "tsc -b && vite build",
     "test": "vitest run",
@@ -13,6 +15,7 @@
   "dependencies": {
     "@vitejs/plugin-react": "latest",
     "lucide-react": "latest",
+    "pg": "^8.23.1",
     "react": "latest",
     "react-dom": "latest",
     "recharts": "latest",
