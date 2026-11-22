@@ -28,8 +28,8 @@ describe.skipIf(!configured)('PostgreSQL incident transactions',()=>{
   it('keeps concurrent notes, conflicts on ownership, scopes reads, and retains resolutions',async()=>{
     const created=await store.monitor(workspace,{...alert,deliveryId:'lifecycle',fingerprint:'lifecycle'});const id=created.incident.id;const version=created.incident.version
     const ownership=await Promise.all([store.mutate(workspace,id,version,'A','assign','A'),store.mutate(workspace,id,version,'B','assign','B')]);expect(ownership.filter(x=>x.error==='conflict')).toHaveLength(1)
-    const notes=await Promise.all([store.mutate(workspace,id,version,'A','note','First note'),store.mutate(workspace,id,version,'B','handoff','Second note')]);expect(notes.every(x=>x.incident)).toBe(true)
-    let current=await store.get(workspace,id);expect(current.events.filter(e=>['note','handoff'].includes(e.kind))).toHaveLength(2);expect(await store.get(other,id)).toBeNull()
+    const notes=await Promise.all([store.mutate(workspace,id,version,'A','note','First note'),store.mutate(workspace,id,version,'B','note','Second note')]);expect(notes.every(x=>x.incident)).toBe(true)
+    let current=await store.get(workspace,id);expect(current.events.filter(e=>e.kind==='note')).toHaveLength(2);expect((await store.mutate(workspace,id,version,'B','handoff','Stale draft')).error).toBe('conflict');expect(await store.get(other,id)).toBeNull()
     const cursor=current.events.at(-1).seq;current=(await store.mutate(workspace,id,current.version,'A','resolve','Rollback complete')).incident;current=(await store.mutate(workspace,id,current.version,'A','reopen','Issue recurred')).incident
     expect((await store.eventsAfter(workspace,id,cursor)).map(e=>e.kind)).toEqual(['resolve','reopen']);expect(current.events.some(e=>e.kind==='resolve')).toBe(true)
     await store.mutate(workspace,id,current.version,'A','resolve','Resolved again');const fresh=await store.monitor(workspace,{...alert,deliveryId:'new-firing',fingerprint:'lifecycle'});expect(fresh.incident.id).not.toBe(id)

@@ -4,7 +4,7 @@ import { ConflictError } from './pg-store.mjs'
 
 const equal=(a,b)=>{const x=Buffer.from(a),y=Buffer.from(b);return x.length===y.length&&timingSafeEqual(x,y)}
 export function createPostgresApi(store,{credentials,allowedOrigin}) {
-  if(!Array.isArray(credentials)||!credentials.length||credentials.some(c=>typeof c.token!=='string'||c.token.length<24||!c.workspace||!['viewer','responder','admin','monitor'].includes(c.role)))throw Error('Invalid credentials configuration')
+  if(!Array.isArray(credentials)||!credentials.length||credentials.some(c=>typeof c.token!=='string'||c.token.length<24||!c.workspace||!['viewer','responder','admin','monitor'].includes(c.role))||new Set(credentials.map(c=>c.token)).size!==credentials.length)throw Error('Invalid credentials configuration')
   return createServer(async(req,res)=>{
     const requestId=randomUUID();res.setHeader('X-Request-Id',requestId);res.setHeader('Content-Type','application/json');res.setHeader('Cache-Control','no-store')
     const send=(status,body)=>{res.writeHead(status);res.end(JSON.stringify(body));console.log(JSON.stringify({requestId,method:req.method,path:new URL(req.url,'http://localhost').pathname,status}))}
@@ -15,7 +15,7 @@ export function createPostgresApi(store,{credentials,allowedOrigin}) {
     const token=(req.headers.authorization??'').replace(/^Bearer /,'');const principal=credentials.find(c=>equal(token,c.token));if(!principal)return send(401,{error:'unauthorized'})
     const {workspace,role}=principal;const read=['viewer','responder','admin'].includes(role);const write=['responder','admin'].includes(role)
     try {
-      if(req.method==='GET'&&url.pathname==='/api/v1/session')return send(200,{workspace,role})
+      if(req.method==='GET'&&url.pathname==='/api/v1/session')return send(200,{workspace,role,actor:principal.actor||role})
       if(req.method==='GET'&&url.pathname==='/api/v1/services'&&read){const {rows}=await store.pool.query('SELECT id,name,description FROM services WHERE workspace_id=$1 ORDER BY name',[workspace]);return send(200,{items:rows})}
       if(req.method==='GET'&&url.pathname==='/api/v1/incidents'&&read)return send(200,await store.list(workspace,{status:url.searchParams.get('status'),service:url.searchParams.get('service'),cursor:url.searchParams.get('cursor'),limit:url.searchParams.get('limit')}))
       const match=url.pathname.match(/^\/api\/v1\/incidents\/([0-9a-f-]{36})(?:\/(events|actions))?$/i)

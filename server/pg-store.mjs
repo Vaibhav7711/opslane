@@ -31,7 +31,7 @@ export function createPostgresStore(connectionString) {
   const mutate = async(workspace,id,expectedVersion,actor,action,text)=>tx(async c=>{
     if(typeof actor!=='string'||!actor.trim()||typeof text!=='string'||!text.trim())return {error:'invalid'}
     const rows=await c.query('SELECT * FROM incidents WHERE workspace_id=$1 AND id=$2 FOR UPDATE',[workspace,id]);const current=rows.rows[0];if(!current)return {error:'not_found'}
-    const notes=['note','handoff'];if(!notes.includes(action)&&current.version!==expectedVersion)return {error:'conflict',incident:await get(workspace,id,c)}
+    const notes=['note','handoff'];if(action!=='note'&&current.version!==expectedVersion)return {error:'conflict',incident:await get(workspace,id,c)}
     const fields={acknowledge:['status','Acknowledged'],assign:['owner',text],severity:['severity',text],impact:['impact',text],next:['next_action',text],mitigate:['status','Mitigating'],resolve:['status','Resolved'],reopen:['status','Investigating']}
     if(!notes.includes(action)&&!Object.hasOwn(fields,action))return {error:'invalid'}
     if(action==='reopen'&&current.status!=='Resolved'||action==='resolve'&&current.status==='Resolved'||action==='severity'&&!['SEV-1','SEV-2','SEV-3'].includes(text))return {error:'invalid'}
