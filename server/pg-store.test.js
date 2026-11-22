@@ -19,6 +19,12 @@ describe.skipIf(!configured)('PostgreSQL incident transactions',()=>{
     await expect(store.monitor(workspace,candidate,{failBeforeCommit:true})).rejects.toThrow('Injected')
     const retry=await store.monitor(workspace,candidate);expect(retry.duplicate).toBe(false);expect(retry.incident.events).toHaveLength(1)
   })
+  it('orders numeric event cursors correctly beyond single digits',async()=>{
+    const created=await store.monitor(workspace,{...alert,deliveryId:'ordering',fingerprint:'ordering'});const id=created.incident.id
+    for(let n=0;n<12;n++)await store.mutate(workspace,id,0,'A','note',`Note ${n}`)
+    const all=(await store.get(workspace,id)).events;expect(all.map(e=>BigInt(e.seq))).toEqual([...all.map(e=>BigInt(e.seq))].sort((a,b)=>a<b?-1:a>b?1:0))
+    const cursor=all[4].seq;expect((await store.eventsAfter(workspace,id,cursor)).map(e=>e.id)).toEqual(all.slice(5).map(e=>e.id))
+  })
   it('keeps concurrent notes, conflicts on ownership, scopes reads, and retains resolutions',async()=>{
     const created=await store.monitor(workspace,{...alert,deliveryId:'lifecycle',fingerprint:'lifecycle'});const id=created.incident.id;const version=created.incident.version
     const ownership=await Promise.all([store.mutate(workspace,id,version,'A','assign','A'),store.mutate(workspace,id,version,'B','assign','B')]);expect(ownership.filter(x=>x.error==='conflict')).toHaveLength(1)
