@@ -1,213 +1,51 @@
-import { useEffect, useMemo, useState } from 'react'
-import {
-  Activity, Bell, Blocks, Check, ChevronDown, CircleGauge, Clock3, Command,
-  Flame, Gauge, LayoutDashboard, LifeBuoy, Menu, Moon, Radio, Search,
-  Server, Settings, ShieldCheck, Sparkles, Users, X, Zap,
-} from 'lucide-react'
-import {
-  Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
-} from 'recharts'
-import { initialIncidents, services, timeline } from './data'
-import type { Incident, Severity } from './types'
-import { calculateSlaRisk, filterIncidents, formatDuration } from './utils'
+import { useEffect, useRef, useState } from 'react'
+import type { FormEvent } from 'react'
+import { Activity, ArrowLeft, Plus, Search, Server, LayoutDashboard, Flame, Download, Upload, Pencil, Trash2, CheckCircle2, Clock3 } from 'lucide-react'
+import { id, metrics, seed, transition, validDatabase } from './domain'
+import type { Database, Incident, Service, Severity, Status } from './domain'
+import './product.css'
 
-const nav = [
-  { label: 'Overview', icon: LayoutDashboard },
-  { label: 'Incidents', icon: Flame, badge: '3' },
-  { label: 'Services', icon: Blocks },
-  { label: 'On-call', icon: Users },
-  { label: 'Runbooks', icon: LifeBuoy },
-]
-
-function Sparkline({ values, critical }: { values: number[]; critical: boolean }) {
-  const points = values.map((value, index) => `${index * 18},${48 - value * 0.65}`).join(' ')
-  return (
-    <svg viewBox="0 0 126 48" className="sparkline" role="img" aria-label="Recent service latency trend">
-      <polyline points={points} fill="none" stroke={critical ? '#ff826e' : '#b7f36b'} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
-function MetricCard({ label, value, note, tone, icon: Icon }: { label: string; value: string; note: string; tone: string; icon: typeof Activity }) {
-  return (
-    <article className="metric-card">
-      <div className={`metric-icon ${tone}`}><Icon size={18} /></div>
-      <div>
-        <p>{label}</p>
-        <strong>{value}</strong>
-        <span>{note}</span>
-      </div>
-    </article>
-  )
-}
+const KEY = 'opslane-workspace-v1'
+type Screen = 'overview' | 'incidents' | 'services' | 'data'
+const date = (s: string) => new Date(s).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
+const serviceName = (db: Database, serviceId: string) => db.services.find(s => s.id === serviceId)?.name ?? 'Unknown service'
+const emptyIncident = (serviceId: string): Incident => ({ id: id(), title: '', description: '', severity: 'SEV-2', status: 'Investigating', owner: '', serviceId, createdAt: new Date().toISOString(), acknowledgedAt: null, resolvedAt: null, timeline: [] })
 
 function App() {
-  const [incidents, setIncidents] = useState<Incident[]>(() => {
-    const saved = localStorage.getItem('opslane-incidents')
-    return saved ? JSON.parse(saved) : initialIncidents
-  })
-  const [selectedId, setSelectedId] = useState(initialIncidents[0].id)
+  const [load] = useState(() => { try { const saved = localStorage.getItem(KEY); if (!saved) return { db: seed, error: '' }; const value: unknown = JSON.parse(saved); if (validDatabase(value)) return { db: value, error: '' }; return { db: seed, error: 'Saved data is invalid. It has not been overwritten. Import a backup or reset the workspace.' } } catch { return { db: seed, error: 'Saved data could not be read. It has not been overwritten. Import a backup or reset the workspace.' } } })
+  const [db, setDb] = useState(load.db)
+  const [storageError, setStorageError] = useState(load.error)
+  const [screen, setScreen] = useState<Screen>('overview')
+  const [selected, setSelected] = useState(() => location.hash.startsWith('#/incidents/') ? decodeURIComponent(location.hash.split('/')[2] ?? '') : '')
+  const [edit, setEdit] = useState<Incident | null>(null)
+  const [serviceEdit, setServiceEdit] = useState<Service | null>(null)
   const [query, setQuery] = useState('')
-  const [severity, setSeverity] = useState<Severity | 'All'>('All')
-  const [live, setLive] = useState(true)
-  const [mobileNav, setMobileNav] = useState(false)
-  const [commandOpen, setCommandOpen] = useState(false)
-  const [pulse, setPulse] = useState(0)
-
-  useEffect(() => localStorage.setItem('opslane-incidents', JSON.stringify(incidents)), [incidents])
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
-        event.preventDefault()
-        setCommandOpen((open) => !open)
-      }
-      if (event.key === 'Escape') setCommandOpen(false)
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [])
-  useEffect(() => {
-    if (!live) return
-    const timer = window.setInterval(() => setPulse((value) => value + 1), 5000)
-    return () => window.clearInterval(timer)
-  }, [live])
-
-  const visibleIncidents = useMemo(() => filterIncidents(incidents, query, severity), [incidents, query, severity])
-  const selected = incidents.find((incident) => incident.id === selectedId) ?? incidents[0]
-  const chartData = useMemo(() => timeline.map((point, index) => ({
-    ...point,
-    latency: index === timeline.length - 1 ? Math.max(250, point.latency + ((pulse % 4) - 2) * 22) : point.latency,
-  })), [pulse])
-
-  const acknowledge = (id: string) => setIncidents((items) => items.map((item) => item.id === id ? { ...item, acknowledged: true } : item))
-
-  return (
-    <div className="app-shell">
-      <aside className={`sidebar ${mobileNav ? 'open' : ''}`}>
-        <div className="brand"><span><Activity size={19} /></span><b>opslane</b></div>
-        <button className="mobile-close" onClick={() => setMobileNav(false)} aria-label="Close navigation"><X /></button>
-        <div className="workspace-switcher">
-          <div className="workspace-logo">N</div>
-          <div><span>Workspace</span><b>Northstar Labs</b></div>
-          <ChevronDown size={15} />
-        </div>
-        <nav aria-label="Primary navigation">
-          <p className="nav-label">Command center</p>
-          {nav.map(({ label, icon: Icon, badge }) => (
-            <button key={label} className={label === 'Overview' ? 'active' : ''}>
-              <Icon size={18} /><span>{label}</span>{badge && <em>{badge}</em>}
-            </button>
-          ))}
-          <p className="nav-label">Workspace</p>
-          <button><ShieldCheck size={18} /><span>Policies</span></button>
-          <button><Settings size={18} /><span>Settings</span></button>
-        </nav>
-        <div className="oncall-card">
-          <div><Radio size={16} /><span>ON-CALL NOW</span></div>
-          <strong>Platform rotation</strong>
-          <p><span className="avatar">AM</span>Aarav & 2 others</p>
-          <button>View schedule</button>
-        </div>
-        <div className="user-row"><span className="avatar light">VJ</span><div><b>Vaibhav Jain</b><small>Engineering</small></div><ChevronDown size={15} /></div>
-      </aside>
-
-      {mobileNav && <button className="nav-scrim" onClick={() => setMobileNav(false)} aria-label="Close navigation overlay" />}
-
-      <main>
-        <header className="topbar">
-          <button className="menu-button" onClick={() => setMobileNav(true)} aria-label="Open navigation"><Menu /></button>
-          <button className="command-search" onClick={() => setCommandOpen(true)}><Search size={17} /><span>Search incidents, services, runbooks…</span><kbd>⌘ K</kbd></button>
-          <div className="top-actions">
-            <button className={`live-toggle ${live ? 'enabled' : ''}`} onClick={() => setLive((value) => !value)}><span />{live ? 'Live' : 'Paused'}</button>
-            <button aria-label="Theme"><Moon size={18} /></button>
-            <button aria-label="Notifications" className="notification"><Bell size={18} /><span /></button>
-            <span className="avatar light">VJ</span>
-          </div>
-        </header>
-
-        <div className="dashboard">
-          <section className="page-heading">
-            <div><p className="eyebrow">COMMAND CENTER <span>•</span> LAST UPDATED JUST NOW</p><h1>System overview</h1><p>Monitor service health and coordinate active response.</p></div>
-            <button className="new-incident"><Zap size={17} fill="currentColor" />Declare incident</button>
-          </section>
-
-          <section className="metrics-grid" aria-label="System metrics">
-            <MetricCard label="System availability" value="99.94%" note="↑ 0.03% vs last week" tone="green" icon={ShieldCheck} />
-            <MetricCard label="Active incidents" value="3" note="1 requires attention" tone="coral" icon={Flame} />
-            <MetricCard label="Median response" value="3m 42s" note="↓ 18s from target" tone="violet" icon={Clock3} />
-            <MetricCard label="Services healthy" value="18 / 20" note="2 services degraded" tone="blue" icon={Server} />
-          </section>
-
-          <section className="main-grid">
-            <article className="panel telemetry-panel">
-              <div className="panel-heading"><div><p className="eyebrow">PAYMENTS API</p><h2>Traffic health</h2></div><div className="legend"><span className="latency-dot" />Latency <span className="error-dot" />Errors</div></div>
-              <div className="chart-summary"><div><strong>{chartData.at(-1)?.latency} ms</strong><span>p95 latency</span></div><div><strong>5.1%</strong><span>error rate</span></div><div><strong>14.8k</strong><span>req / min</span></div></div>
-              <div className="chart-wrap">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData} margin={{ top: 8, right: 8, left: -24, bottom: 0 }}>
-                    <defs><linearGradient id="latencyFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#b7f36b" stopOpacity={0.28} /><stop offset="100%" stopColor="#b7f36b" stopOpacity={0} /></linearGradient></defs>
-                    <CartesianGrid stroke="#292d27" strokeDasharray="3 5" vertical={false} />
-                    <XAxis dataKey="time" stroke="#73796e" tickLine={false} axisLine={false} fontSize={11} />
-                    <YAxis stroke="#73796e" tickLine={false} axisLine={false} fontSize={11} />
-                    <Tooltip contentStyle={{ background: '#171a16', border: '1px solid #353a31', borderRadius: 12 }} />
-                    <Area type="monotone" dataKey="latency" stroke="#b7f36b" strokeWidth={2.5} fill="url(#latencyFill)" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="anomaly-note"><Sparkles size={16} /><div><b>Anomaly detected at 11:26</b><span>Latency exceeded the 30-day baseline by 3.2×</span></div><button>Inspect trace</button></div>
-            </article>
-
-            <article className="panel services-panel">
-              <div className="panel-heading"><div><p className="eyebrow">SERVICE CATALOG</p><h2>Live health</h2></div><button>View all</button></div>
-              <div className="service-list">
-                {services.map((service) => <div className="service-row" key={service.name}>
-                  <div className={`state-icon ${service.state.toLowerCase()}`}><CircleGauge size={17} /></div>
-                  <div className="service-name"><b>{service.name}</b><span><i className={service.state.toLowerCase()} />{service.state}</span></div>
-                  <Sparkline values={service.spark} critical={service.state === 'Critical'} />
-                  <div className="service-latency"><b>{service.latency}ms</b><span className={service.change > 0 ? 'up' : 'down'}>{service.change > 0 ? '↑' : '↓'} {Math.abs(service.change)}%</span></div>
-                </div>)}
-              </div>
-            </article>
-          </section>
-
-          <section className="incidents-layout">
-            <article className="panel incident-list-panel">
-              <div className="panel-heading incident-heading"><div><p className="eyebrow">INCIDENT QUEUE</p><h2>Active response</h2></div><div className="filters">{(['All', 'SEV-1', 'SEV-2', 'SEV-3'] as const).map((item) => <button key={item} onClick={() => setSeverity(item)} className={severity === item ? 'active' : ''}>{item}</button>)}</div></div>
-              <div className="incident-search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter incidents" aria-label="Filter incidents" /></div>
-              <div className="incident-table">
-                {visibleIncidents.map((incident) => <button key={incident.id} className={`incident-row ${selectedId === incident.id ? 'selected' : ''}`} onClick={() => setSelectedId(incident.id)}>
-                  <span className={`severity ${incident.severity.toLowerCase()}`}>{incident.severity}</span>
-                  <span className="incident-main"><b>{incident.title}</b><small>{incident.id} · {incident.service}</small></span>
-                  <span className="status"><i />{incident.status}</span>
-                  <span className="incident-owner"><span className="avatar">{incident.owner.split(' ').map((part) => part[0]).join('')}</span>{incident.owner}</span>
-                  <span className="elapsed">{formatDuration(incident.elapsedMinutes)}</span>
-                </button>)}
-              </div>
-            </article>
-
-            <aside className="panel incident-detail">
-              <div className="detail-top"><span className={`severity ${selected.severity.toLowerCase()}`}>{selected.severity}</span><span>{selected.id}</span><button aria-label="More options">•••</button></div>
-              <h2>{selected.title}</h2><p>{selected.update}</p>
-              <div className="risk-meter"><div><span>SLA risk</span><b>{calculateSlaRisk(selected)}%</b></div><div className="meter"><span style={{ width: `${calculateSlaRisk(selected)}%` }} /></div><small>Based on severity, elapsed time, and customer impact</small></div>
-              <dl><div><dt>Status</dt><dd><i />{selected.status}</dd></div><div><dt>Commander</dt><dd><span className="avatar">{selected.owner.split(' ').map((part) => part[0]).join('')}</span>{selected.owner}</dd></div><div><dt>Impact</dt><dd>{selected.customerImpact}% of requests</dd></div><div><dt>Duration</dt><dd>{formatDuration(selected.elapsedMinutes)}</dd></div></dl>
-              <button className={`acknowledge ${selected.acknowledged ? 'done' : ''}`} onClick={() => acknowledge(selected.id)} disabled={selected.acknowledged}>{selected.acknowledged ? <><Check size={17} />Acknowledged</> : 'Acknowledge incident'}</button>
-            </aside>
-          </section>
-        </div>
-      </main>
-
-      {commandOpen && <div className="command-overlay" onMouseDown={() => setCommandOpen(false)}>
-        <section className="command-modal" onMouseDown={(event) => event.stopPropagation()} role="dialog" aria-modal="true" aria-label="Command palette">
-          <div><Search size={19} /><input autoFocus placeholder="Type a command or search…" value={query} onChange={(event) => setQuery(event.target.value)} /><kbd>ESC</kbd></div>
-          <p>QUICK ACTIONS</p>
-          <button onClick={() => setCommandOpen(false)}><span className="command-icon"><Flame size={18} /></span><span><b>Declare a new incident</b><small>Start an incident response room</small></span><kbd>D</kbd></button>
-          <button onClick={() => { setLive((value) => !value); setCommandOpen(false) }}><span className="command-icon"><Radio size={18} /></span><span><b>{live ? 'Pause' : 'Resume'} live telemetry</b><small>Control incoming metric updates</small></span><kbd>L</kbd></button>
-          <button onClick={() => setCommandOpen(false)}><span className="command-icon"><Gauge size={18} /></span><span><b>Open service catalog</b><small>Review all service-level objectives</small></span><kbd>S</kbd></button>
-          <footer><span><Command size={13} /> K to open</span><span>↑↓ Navigate · ↵ Select</span></footer>
-        </section>
-      </div>}
-    </div>
-  )
+  const [filter, setFilter] = useState('All')
+  const [sort, setSort] = useState('Newest')
+  const [update, setUpdate] = useState('')
+  const [notice, setNotice] = useState('')
+  const importRef = useRef<HTMLInputElement>(null)
+  useEffect(() => { if (!storageError) { try { localStorage.setItem(KEY, JSON.stringify(db)) } catch { setStorageError('Could not save to browser storage. Export a backup before leaving.') } } }, [db, storageError])
+  useEffect(() => { const onHash = () => { const match = location.hash.match(/^#\/incidents\/(.+)$/); setSelected(match ? decodeURIComponent(match[1]) : '') }; window.addEventListener('hashchange', onHash); return () => window.removeEventListener('hashchange', onHash) }, [])
+  const navigate = (next: Screen) => { setScreen(next); location.hash = ''; setSelected('') }
+  const open = (incident: Incident) => { setScreen('incidents'); location.hash = `/incidents/${encodeURIComponent(incident.id)}`; setSelected(incident.id) }
+  const incident = db.incidents.find(i => i.id === selected)
+  const stats = metrics(db.incidents)
+  const visible = db.incidents.filter(i => `${i.title} ${i.owner} ${serviceName(db, i.serviceId)}`.toLowerCase().includes(query.toLowerCase()) && (filter === 'All' || i.status === filter || i.severity === filter)).sort((a, b) => sort === 'Oldest' ? a.createdAt.localeCompare(b.createdAt) : sort === 'Severity' ? a.severity.localeCompare(b.severity) : b.createdAt.localeCompare(a.createdAt))
+  const saveIncident = (e: FormEvent) => { e.preventDefault(); if (!edit || !edit.title.trim() || !edit.owner.trim() || !edit.description.trim()) return; const existing = db.incidents.find(i => i.id === edit.id); const updated = existing ? { ...edit, timeline: [...edit.timeline, { id: id(), at: new Date().toISOString(), text: 'Incident details updated.' }] } : { ...edit, timeline: [{ id: id(), at: new Date().toISOString(), text: 'Incident declared.' }] }; setDb(d => ({ ...d, incidents: existing ? d.incidents.map(i => i.id === updated.id ? updated : i) : [updated, ...d.incidents] })); setEdit(null); setNotice(existing ? 'Incident updated.' : 'Incident declared.'); open(updated) }
+  const updateIncident = (next: Incident) => setDb(d => ({ ...d, incidents: d.incidents.map(i => i.id === next.id ? next : i) }))
+  const exportData = () => { const url = URL.createObjectURL(new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' })); const a = document.createElement('a'); a.href = url; a.download = 'opslane-backup.json'; a.click(); URL.revokeObjectURL(url) }
+  const importData = async (file?: File) => { if (!file) return; try { const value: unknown = JSON.parse(await file.text()); if (!validDatabase(value)) throw new Error('Invalid backup format'); if (window.confirm('Replace this workspace with the imported backup?')) { setDb(value); setStorageError(''); setNotice('Backup imported.'); navigate('overview') } } catch { setNotice('Import failed. Choose a valid Opslane backup.'); } if (importRef.current) importRef.current.value = '' }
+  return <div className="product-shell"><aside className="product-sidebar"><div className="product-brand"><span><Activity size={20}/></span> opslane</div><p className="side-caption">WORKSPACE</p><div className="workspace-name">Northstar Labs <small>Local demo workspace</small></div><p className="side-caption">COMMAND CENTER</p><nav aria-label="Primary navigation">{([['overview','Overview',LayoutDashboard],['incidents','Incidents',Flame],['services','Services',Server],['data','Data & backups',Download]] as const).map(([key,label,Icon]) => <button key={key} className={screen === key && !selected ? 'active' : ''} onClick={() => navigate(key)}><Icon size={18}/>{label}{key === 'incidents' && <span className="nav-count">{stats.open}</span>}</button>)}</nav><div className="sidebar-note"><b>Your data stays here</b><p>This demo stores records in this browser. Export a backup to keep a copy.</p><button onClick={() => navigate('data')}>Manage data</button></div></aside><main className="product-main"><header className="product-top"><span>Northstar Labs <span className="slash">/</span> {selected ? 'Incident detail' : screen[0].toUpperCase()+screen.slice(1)}</span><span className="demo-pill">LOCAL DEMO DATA</span></header><div className="product-content">{storageError && <div className="alert" role="alert">{storageError} <button onClick={() => navigate('data')}>Manage data</button></div>}{notice && <div className="notice" role="status">{notice}<button onClick={() => setNotice('')} aria-label="Dismiss">×</button></div>}
+  {selected && !incident && <section className="empty"><h1>Incident not found</h1><p>This link may refer to a record that no longer exists in this browser.</p><button onClick={() => navigate('incidents')}>View incidents</button></section>}
+  {!selected && screen === 'overview' && <><div className="page-title"><div><p className="eyebrow">YOUR WORKSPACE</p><h1>Operations overview</h1><p>A clear picture of the incidents in your workspace.</p></div><button className="primary" onClick={() => setEdit(emptyIncident(db.services[0]?.id ?? ''))} disabled={!db.services.length}><Plus size={17}/>Declare incident</button></div><div className="metric-grid"><Metric label="Open incidents" value={String(stats.open)} note="Across all services"/><Metric label="Critical incidents" value={String(stats.critical)} note="Open SEV-1 incidents"/><Metric label="Avg. acknowledgement" value={stats.acknowledge === null ? '—' : `${stats.acknowledge} min`} note="From recorded timestamps"/><Metric label="Avg. resolution" value={stats.resolution === null ? '—' : `${stats.resolution} min`} note="Resolved incidents only"/></div><div className="overview-grid"><section className="surface"><div className="surface-heading"><div><p className="eyebrow">RESPONSE QUEUE</p><h2>Recent incidents</h2></div><button className="text-button" onClick={() => navigate('incidents')}>View all incidents</button></div><IncidentRows incidents={visible.slice(0,5)} db={db} open={open}/></section><section className="surface"><div className="surface-heading"><div><p className="eyebrow">SERVICE CATALOG</p><h2>Service health</h2></div><button className="text-button" onClick={() => navigate('services')}>Manage</button></div>{db.services.map(s => { const n = db.incidents.filter(i => i.serviceId === s.id && i.status !== 'Resolved').length; return <div className="health-row" key={s.id}><span className={n ? 'health-dot warn' : 'health-dot'}/><div><b>{s.name}</b><small>{s.description}</small></div><span>{n ? `${n} open` : 'No open incidents'}</span></div> })}</section></div></>}
+  {!selected && screen === 'incidents' && <><div className="page-title"><div><p className="eyebrow">INCIDENT MANAGEMENT</p><h1>Incidents</h1><p>Track response from first report through resolution.</p></div><button className="primary" disabled={!db.services.length} onClick={() => setEdit(emptyIncident(db.services[0]?.id ?? ''))}><Plus size={17}/>Declare incident</button></div>{!db.services.length && <p className="alert">Create a service before declaring an incident.</p>}<section className="surface"><div className="toolbar"><label className="search-field"><Search size={16}/><span className="sr-only">Search incidents</span><input placeholder="Search title, owner, or service" value={query} onChange={e => setQuery(e.target.value)}/></label><label>Filter <select value={filter} onChange={e => setFilter(e.target.value)}>{['All','Investigating','Mitigating','Monitoring','Resolved','SEV-1','SEV-2','SEV-3'].map(v => <option key={v}>{v}</option>)}</select></label><label>Sort <select value={sort} onChange={e => setSort(e.target.value)}>{['Newest','Oldest','Severity'].map(v => <option key={v}>{v}</option>)}</select></label></div><IncidentRows incidents={visible} db={db} open={open}/></section></>}
+  {incident && <><button className="back-link" onClick={() => navigate('incidents')}><ArrowLeft size={16}/>All incidents</button><div className="page-title"><div><p className="eyebrow">{incident.id.toUpperCase().slice(0,12)} · {serviceName(db,incident.serviceId)}</p><h1>{incident.title}</h1><p>{incident.description}</p></div><div className="actions"><button onClick={() => setEdit(incident)}><Pencil size={16}/>Edit</button>{!incident.acknowledgedAt && <button onClick={() => updateIncident(transition(incident,'acknowledge'))}>Acknowledge</button>}<button className="primary" onClick={() => updateIncident(transition(incident, incident.status === 'Resolved' ? 'reopen' : 'resolve'))}>{incident.status === 'Resolved' ? 'Reopen incident' : 'Resolve incident'}</button></div></div><div className="detail-grid"><section className="surface"><div className="surface-heading"><div><p className="eyebrow">RESPONSE LOG</p><h2>Incident timeline</h2></div></div><form className="update-form" onSubmit={e => { e.preventDefault(); if (!update.trim()) return; updateIncident({ ...incident, timeline: [...incident.timeline, { id: id(), at: new Date().toISOString(), text: update.trim() }] }); setUpdate('') }}><label htmlFor="update">Add an update</label><textarea id="update" value={update} onChange={e => setUpdate(e.target.value)} placeholder="What changed?" required/><button className="primary" type="submit">Post update</button></form><ol className="timeline-list">{[...incident.timeline].reverse().map(u => <li key={u.id}><span className="timeline-dot"/><div><p>{u.text}</p><time>{date(u.at)}</time></div></li>)}</ol></section><aside className="surface detail-meta"><p className="eyebrow">INCIDENT DETAILS</p><dl><div><dt>Status</dt><dd>{incident.status}</dd></div><div><dt>Severity</dt><dd><span className={`badge ${incident.severity.toLowerCase()}`}>{incident.severity}</span></dd></div><div><dt>Owner</dt><dd>{incident.owner}</dd></div><div><dt>Service</dt><dd>{serviceName(db,incident.serviceId)}</dd></div><div><dt>Declared</dt><dd>{date(incident.createdAt)}</dd></div><div><dt>Acknowledged</dt><dd>{incident.acknowledgedAt ? date(incident.acknowledgedAt) : 'Not yet'}</dd></div><div><dt>Resolved</dt><dd>{incident.resolvedAt ? date(incident.resolvedAt) : 'Not yet'}</dd></div></dl><button className="danger-link" onClick={() => { if (window.confirm('Delete this incident and its timeline? This cannot be undone.')) { setDb(d => ({ ...d, incidents: d.incidents.filter(i => i.id !== incident.id) })); navigate('incidents'); setNotice('Incident deleted.') } }}><Trash2 size={15}/>Delete incident</button></aside></div></>}
+  {!selected && screen === 'services' && <><div className="page-title"><div><p className="eyebrow">SERVICE CATALOG</p><h1>Services</h1><p>Service status is derived from open incidents, not live monitoring.</p></div><button className="primary" onClick={() => setServiceEdit({ id: id(), name: '', description: '' })}><Plus size={17}/>Add service</button></div><div className="service-grid">{db.services.map(s => { const related = db.incidents.filter(i => i.serviceId === s.id); const openCount = related.filter(i => i.status !== 'Resolved').length; return <section className="surface service-card" key={s.id}><div className="service-card-top"><span className="service-icon"><Server size={18}/></span><span className={openCount ? 'status-tag warning' : 'status-tag'}>{openCount ? 'Incident open' : 'No open incidents'}</span></div><h2>{s.name}</h2><p>{s.description || 'No description'}</p><div className="service-links">{related.length ? related.map(i => <button className="related-link" key={i.id} onClick={() => open(i)}>{i.title} <span>{i.status}</span></button>) : <p>No incidents associated yet.</p>}</div><div className="actions"><button onClick={() => setServiceEdit(s)}><Pencil size={14}/>Edit</button><button disabled={related.length > 0} title={related.length ? 'Remove associated incidents first' : 'Delete service'} onClick={() => { if (window.confirm(`Delete ${s.name}?`)) setDb(d => ({ ...d, services: d.services.filter(x => x.id !== s.id) })) }}><Trash2 size={14}/>Delete</button></div></section> })}{!db.services.length && <div className="empty">No services yet. Add one to get started.</div>}</div></>}
+  {!selected && screen === 'data' && <><div className="page-title"><div><p className="eyebrow">WORKSPACE SETTINGS</p><h1>Data & backups</h1><p>Manage this browser's local workspace.</p></div></div><section className="surface data-panel"><h2>Your data, on this device</h2><p>Changes are stored in this browser only. Clearing browser data can remove them. Export a JSON backup to move or restore your workspace.</p><div className="actions"><button onClick={exportData}><Download size={16}/>Export backup</button><button onClick={() => importRef.current?.click()}><Upload size={16}/>Import backup</button><input ref={importRef} type="file" accept="application/json,.json" hidden onChange={e => void importData(e.target.files?.[0])}/></div><hr/><h2>Reset demo workspace</h2><p>Replace all local incidents and services with the sample data.</p><button className="danger-link" onClick={() => { if (window.confirm('Replace all current workspace data with the demo data? Export first if you need a backup.')) { setDb(structuredClone(seed)); setStorageError(''); setNotice('Demo workspace reset.') } }}>Reset workspace</button></section></>}
+  </div></main>{edit && <div className="modal-backdrop"><section className="modal" role="dialog" aria-modal="true" aria-labelledby="incident-form-title"><div className="modal-head"><div><p className="eyebrow">INCIDENT RESPONSE</p><h2 id="incident-form-title">{db.incidents.some(i => i.id === edit.id) ? 'Edit incident' : 'Declare an incident'}</h2></div><button aria-label="Close" onClick={() => setEdit(null)}>×</button></div><form onSubmit={saveIncident}><label>Title<input autoFocus required maxLength={120} value={edit.title} onChange={e => setEdit({ ...edit, title: e.target.value })}/></label><label>Description<textarea required value={edit.description} onChange={e => setEdit({ ...edit, description: e.target.value })}/></label><div className="form-grid"><label>Severity<select value={edit.severity} onChange={e => setEdit({ ...edit, severity: e.target.value as Severity })}>{['SEV-1','SEV-2','SEV-3'].map(x => <option key={x}>{x}</option>)}</select></label><label>Status<select value={edit.status} onChange={e => { const status = e.target.value as Status; setEdit({ ...edit, status, resolvedAt: status === 'Resolved' ? edit.resolvedAt ?? new Date().toISOString() : null }) }}>{['Investigating','Mitigating','Monitoring','Resolved'].map(x => <option key={x}>{x}</option>)}</select></label><label>Owner<input required value={edit.owner} onChange={e => setEdit({ ...edit, owner: e.target.value })}/></label><label>Affected service<select required value={edit.serviceId} onChange={e => setEdit({ ...edit, serviceId: e.target.value })}>{db.services.map(s => <option value={s.id} key={s.id}>{s.name}</option>)}</select></label></div><label>Declared at<input type="datetime-local" required value={new Date(new Date(edit.createdAt).getTime() - new Date().getTimezoneOffset()*60000).toISOString().slice(0,16)} onChange={e => { if (e.target.value) setEdit({ ...edit, createdAt: new Date(e.target.value).toISOString() }) }}/></label><div className="modal-actions"><button type="button" onClick={() => setEdit(null)}>Cancel</button><button className="primary" type="submit">Save incident</button></div></form></section></div>}
+  {serviceEdit && <div className="modal-backdrop"><section className="modal small" role="dialog" aria-modal="true" aria-labelledby="service-form-title"><div className="modal-head"><h2 id="service-form-title">{db.services.some(s => s.id === serviceEdit.id) ? 'Edit service' : 'Add service'}</h2><button aria-label="Close" onClick={() => setServiceEdit(null)}>×</button></div><form onSubmit={e => { e.preventDefault(); if (!serviceEdit.name.trim()) return; setDb(d => ({ ...d, services: d.services.some(s => s.id === serviceEdit.id) ? d.services.map(s => s.id === serviceEdit.id ? serviceEdit : s) : [...d.services, serviceEdit] })); setServiceEdit(null); setNotice('Service saved.') }}><label>Name<input autoFocus required value={serviceEdit.name} onChange={e => setServiceEdit({ ...serviceEdit, name: e.target.value })}/></label><label>Description<textarea value={serviceEdit.description} onChange={e => setServiceEdit({ ...serviceEdit, description: e.target.value })}/></label><div className="modal-actions"><button type="button" onClick={() => setServiceEdit(null)}>Cancel</button><button className="primary">Save service</button></div></form></section></div>}</div>
 }
-
+function Metric({ label, value, note }: {label:string;value:string;note:string}) { return <article className="product-metric"><span>{label}</span><strong>{value}</strong><small>{note}</small></article> }
+function IncidentRows({ incidents, db, open }: {incidents:Incident[];db:Database;open:(i:Incident)=>void}) { return <div className="incident-rows">{incidents.map(i => <button className="product-row" key={i.id} onClick={() => open(i)}><span className={`badge ${i.severity.toLowerCase()}`}>{i.severity}</span><span className="row-title"><b>{i.title}</b><small>{serviceName(db,i.serviceId)} · {i.owner}</small></span><span className="row-status">{i.status === 'Resolved' ? <CheckCircle2 size={15}/> : <Clock3 size={15}/>} {i.status}</span><time>{date(i.createdAt)}</time></button>)}{!incidents.length && <div className="empty"><b>No incidents found</b><p>Try a different filter or declare a new incident.</p></div>}</div> }
 export default App

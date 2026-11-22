@@ -1,37 +1,27 @@
 # Opslane
 
-Opslane is a production-style incident response command center built for engineering teams. It combines live service telemetry, incident triage, SLA risk scoring, and operational workflows in one responsive interface.
+A local-first incident management workspace for practicing the full response lifecycle. [Live demo](https://vaibhav7711.github.io/opslane/) · [Repository](https://github.com/Vaibhav7711/opslane)
 
-## Highlights
+## What it does
 
-- Live telemetry simulation with pause/resume controls
-- Searchable and severity-filtered incident queue
-- Explainable SLA risk score based on severity, duration, and customer impact
-- Persistent acknowledgement state using `localStorage`
-- Keyboard-accessible command palette (`⌘/Ctrl + K`)
-- Responsive operations dashboard with accessible reduced-motion support
-- Unit-tested domain utilities and automated GitHub Pages deployment
-
-## Stack
-
-React · TypeScript · Vite · Recharts · Lucide · Vitest · GitHub Actions
+- Declare and edit incidents with severity, owner, service, status, description and timestamp.
+- Acknowledge, resolve and reopen incidents; add updates to an incident timeline.
+- Search, filter and sort the incident queue. Each incident has a direct hash URL within the current browser's data.
+- Create and edit services, review their incidents, and see status derived from open incidents. Referenced services cannot be deleted.
+- View open and critical counts and average acknowledgement and resolution durations calculated from stored records.
+- Export, validate and import a versioned JSON backup; reset the demo workspace.
 
 ## Run locally
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
 
-```bash
-npm test
-npm run build
-```
+Run `npm run lint`, `npm test`, and `npm run build` for the checks used by CI. The project uses React, TypeScript, Vite, Vitest, and GitHub Actions. Pushes to `main` deploy to GitHub Pages.
 
-## Architecture notes
+## Architecture and limitations
 
-The UI treats incident scoring, formatting, and filtering as domain functions independent from React. This keeps operational rules deterministic and testable. Seed data is isolated from the view layer, while transient telemetry and durable acknowledgement state are managed separately.
+`src/domain.ts` contains the data types, lifecycle transitions, metrics and backup validation; the React view keeps presentation and form state in `src/App.tsx`. Data is stored in localStorage under a versioned key. The initial records are examples. The app is not connected to monitoring, alerts, authentication or a backend; it does not synchronize between browsers or users. Browser data can be cleared, so export a backup. A direct incident link works only where that record exists in local storage.
 
-## Resume bullet
-
-> Built a responsive incident command center in React and TypeScript with simulated live telemetry, explainable SLA risk scoring, persistent workflows, keyboard navigation, unit tests, and CI/CD to GitHub Pages.
+Potential next steps include server-backed collaboration, service ownership, richer audit history, end-to-end automated browser tests, and accessible focus management for dialogs.
